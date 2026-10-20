@@ -96,3 +96,16 @@ calibrate.py      # live overlay tool: prints ball + goal centroids for tuning
 - `robocup.py --no-ev3` runs the camera-only loop and prints motor commands —
   iterate thresholds without the robot wired up.
 - Field calibration via `calibrate.py` before every practice session.
+
+## Calibration Log (fill in on each field session)
+| Item | Value |
+|------|-------|
+| Ball HSV (observed) | H:__–__ S:__–__ V:__–__ |
+| Blue goal HSV (observed) | H:__–__ S:__–__ V:__–__ |
+| Yellow goal HSV (observed) | H:__–__ S:__–__ V:__–__ |
+| ALIGN_TOL_PX tuned | __ |
+| SHOOT_SPEED / SHOOT_MS for ~3 m | __ / __ ms |
+| SHOOT_SPEED / SHOOT_MS for ~8 m | __ / __ ms |
+| LOST_TIMEOUT_S tuned | __ s |
+| Both goals visible simultaneously? | Y / N |
+| Mirror cone warp: goal centroid offset | __ px |
