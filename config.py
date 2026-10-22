@@ -19,3 +19,4 @@ DIBBLE_SPEED   = 60          # dribbler forward (trap/roll)
 SHOOT_SPEED    = 70          # dribbler reverse speed magnitude
 SHOOT_MS       = 250         # dribbler reverse duration (ms)
 ALIGN_TOL_PX   = 40          # |ball_x − goal_x| below this → fire
+BALL_MAX_AREA  = 3000        # if ball blob this large, it's in the dribbler zone — don't re-chase

@@ -84,13 +84,10 @@ tests/test_vision.py  # unit tests for vision.py (synthetic HSV frames)
 ```
 
 ## Implementation status (as of 2026-07-15)
-All 5 implementation tasks complete and committed on `robocup-vision-control` branch.
+All implementation tasks complete and committed on `robocup-vision-control` branch.
 Vision unit tests: 5/5 passing. Camera-only smoke test not yet run on real hardware.
 
 ### Known issues (from code review — fix before competition)
-- **HIGH:** `robocup.py` `_aligned` has hardcoded `ba < 3000` — move to `config.BALL_MAX_AREA`
-- **HIGH:** `vision.py` — mirror cone causes double-detection of ball (direct + reflected image);
-  no ghost rejection. Add ROI or centroid-similarity check.
 - **MEDIUM:** `robocup.py` `_chase` — `vx` stays at `CHASE_SPEED` even while turning;
   bot overshoots when ball is far to one side. Scale `vx` down by `abs(err)`.
 - **MEDIUM:** `robocup.py` `run()` — no frame-rate cap; BLE commands fire at 100+ fps,
@@ -101,6 +98,39 @@ Vision unit tests: 5/5 passing. Camera-only smoke test not yet run on real hardw
 - **LOW:** `robocup.py` — no camera open retry; add 3-retry loop with 3 s backoff.
 - **LOW:** `main.py` line 103 — `p#` syntax error; add "legacy" header or delete file.
 - **LOW:** `calibrate.py` — add on-frame text showing active goal color.
+- **DEFERRED (HIGH, on-field first):** mirror-cone double-detection of ball.
+  `vision.py` currently takes the largest contour (direct view). Add an
+  aspect-ratio or ROI filter only after testing with the real cone on the field.
+
+## Two-script idea (manual half selection)
+Instead of a `--half` flag, the team can run one of two dedicated scripts:
+- `half_blue.py` — ball-detect + chase + shoot at **blue** goal (defend yellow)
+- `half_yellow.py` — ball-detect + chase + shoot at **yellow** goal (defend blue)
+
+Both share the same logic; only the goal color differs. The `--half` CLI flag
+in `robocup.py` already does this in one file — the two-script version is a
+convenience wrapper:
+```python
+# half_blue.py
+from robocup import main
+import sys
+sys.argv = [sys.argv[0], "--half", "1"] + sys.argv[1:]
+main()
+```
+Decide before the competition: one file + flag, or two wrapper scripts.
+Either way, the goal color is fixed before the half starts (ref decides orientation).
+
+## EV3 coding in Python (LATER — not now)
+`ev3_dc` connects to the EV3 Brain over Bluetooth. The Brain runs
+microPython. Once the camera-based logic is solid on the laptop, the
+next step is moving the control loop onto the EV3 itself so the bot
+runs autonomously without the laptop tether:
+1. Port `vision.py` to microPython (cv2 is not available on the Brain —
+   ball detection will need to run on the laptop and stream results, or
+   the vision sensor will be a camera module that can do basic on-board
+   tracking).
+2. Port `robot.py` to use `ev3dc` directly or the built-in motor ports.
+3. `config.py` thresholds stay the same; only the transport layer changes.
 
 ## Open questions / next steps
 1. Confirm the mirror cone's actual FOV/warp on this field → calibrate

@@ -56,7 +56,7 @@ class Bot:
     def _aligned(self, ball, goal):
         bx, by, ba = ball
         gx, gy, ga = goal
-        return abs(bx - gx) < config.ALIGN_TOL_PX and ba < 3000
+        return abs(bx - gx) < config.ALIGN_TOL_PX and ba < config.BALL_MAX_AREA
 
     def _fire(self):
         self.robot.stop()

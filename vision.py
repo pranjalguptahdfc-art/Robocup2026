@@ -29,6 +29,15 @@ def _centroid(mask, min_area):
     return int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"]), area
 
 def ball_centroid(hsv, spec=None):
+    """
+    Returns (cx, cy, area) for the largest orange blob, or None.
+
+    Mirror-cone note: the cone produces a reflected (ghost) image of the
+    field. When the direct and reflected views overlap the blob splits
+    into two contours. We take the LARGEST one — in practice the direct
+    view is always the bigger blob. Tune on-field: if the ghost wins,
+    add an aspect-ratio filter here.
+    """
     spec = spec or config.BALL_HSV
     return _centroid(_mask(hsv, spec), spec["min_area"])
 
