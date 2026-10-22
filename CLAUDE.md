@@ -156,6 +156,7 @@ python half_yellow.py                 # run the second half
 
 ## File layout
 ```
+README.md             # How to run on the school PC, calibration, hardware map
 robocup.py           # ← THE file to run on the robot. Everything is here.
 half_blue.py         # First half: shoot blue.  5 lines, calls robocup.main().
 half_yellow.py       # Second half: shoot yellow. 5 lines, calls robocup.main().
@@ -164,6 +165,20 @@ main.py              # Legacy pink-tracker demo (kept for reference, not used)
 tests/test_vision.py # Unit tests for vision.py (synthetic HSV frames)
 tests/test_robocup_logic.py # Unit tests for robocup.py state-machine flags
 ```
+
+## Running procedure (laptop + EV3)
+**Before running — check the EV3 hardware:**
+- EV3 brick is **powered on** and **paired over Bluetooth** with the laptop.
+- Motors: **A + D** = large drive motors, **C** = dribbler, **Port 1** = white sensor.
+
+**Sequence:**
+1. Camera-only test (no robot needed): `python robocup.py --half 1 --no-ev3`
+2. First half (shoot blue): `python half_blue.py`
+3. Second half (shoot yellow): `python half_yellow.py`
+
+> The EV3 connection happens automatically inside the script — there is no
+> separate "connect" step. `NoEV3: No EV3 device found` = brick off or not paired.
+> Stop the loop at any time by pressing **`q`** in the terminal.
 
 ## Implementation status (as of 2026-10-22)
 All code complete on `robocup-vision-control` branch. 8/8 tests passing.
@@ -181,16 +196,14 @@ Pushed to GitHub. Camera-only smoke test not yet run on real hardware.
 - **LOW:** `main.py` line 103 has a `p#` syntax error (legacy, not used).
 - **LOW:** `calibrate.py` — add on-frame text showing the active goal color.
 
-## Open questions / next steps
-1. Confirm the mirror cone's actual FOV/warp on this field → calibrate
-   goal-centroid → drive-angle mapping.
-2. Measure shot distance vs `SHOOT_MS` at `SHOOT_SPEED=100` for 3 m and 8 m.
-3. Confirm that red sensor lights on other teams' bots are covered —
-   they look orange and will false-trigger the ball detector.
-4. Test the white sensor's mounting position on the real field.
-5. Set `BALL_AREA_CLOSE` so it corresponds to ~15 cm in your camera's view.
-
-## EV3 coding in Python (LATER — not now)
+## Known limitations
+- **Mirror cone:** if the ball appears twice in the frame (direct +
+  reflected), the detector takes the largest blob. If the ghost image is
+  larger, add an aspect-ratio filter.
+- **White sensor mount:** must be angled to look *down* at the boundary
+  line as the bot approaches it. Test on the field.
+- **`ev3_dc` vs `ev3dev2`:** `ev3_dc` connects over Bluetooth from the
+  laptop. `ev3dev2` runs code *on the brick* — not used in this project.
 `ev3_dc` connects to the EV3 Brain over Bluetooth from the laptop.
 `ev3dev2` runs code *on the brick itself* (its own microPython env).
 Once the camera-based logic is solid on the laptop, the next step is
@@ -200,10 +213,11 @@ moving the control loop onto the EV3 so the bot runs without the tether:
 2. Port the motor commands to `ev3dev2`'s motor API on the brick.
 3. The HSV thresholds stay the same; only the transport layer changes.
 
-## Testing plan
-- Each vision function: unit test with synthetic HSV images (in `tests/`).
-- `python robocup.py --half 1 --no-ev3` — camera-only, prints motor commands.
-- `python calibrate.py` — live overlay, tune HSV before every practice session.
+## Testing
+- Unit tests (no hardware): `python -m pytest tests/ -v`
+- Camera-only smoke test: `python robocup.py --half 1 --no-ev3`
+- HSV calibration overlay: `python calibrate.py` (green = ball, blue = goal,
+  press `b` to toggle goal color, `q` to quit)
 
 ## Calibration Log (fill in on each field session)
 | Item | Value |
