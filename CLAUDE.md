@@ -14,13 +14,29 @@
 - Kicker power test: ball bounced off the far goal must not hit the back wall
   of your own goal.
 
+## Hardware map (confirmed with team, 2026-10-22)
+| Port | Component | Notes |
+|------|-----------|-------|
+| **A + D** | Movement wheels | Differential drive (left / right). Speeds −100…100. |
+| **C** | Dribbler motor | Forward = trap/roll; reverse = shoot. |
+| **1** | White color sensor | Boundary-line guard. Sees white → stop + re-search. |
+
+- Laptop connects to the EV3 over **Bluetooth** via `ev3_dc`
+  (EV3 address in `config.py`: `00:16:53:61:AB:61`).
+- `ev3dev2` is installed but is for running code **on the brick** — not used
+  for the laptop→Bluetooth path.
+- The **white boundary lines** around the field do NOT confuse the camera,
+  because the camera detects the **orange** ball — white is a different hue
+  band. The white sensor (port 1) is the boundary guard, not the camera.
+
 ## How it works (state machine)
-The bot cycles through four states each frame; camera has full-field view
-(via mirror cone), so it sees both goals, the ball, and its own position:
+Camera has full-field view (mirror cone). The bot cycles through four states
+each frame (~30 fps):
 
 ```
 SEEK (no ball) ──ball found──► CHASE (drive to + grab ball)
-                                  │ ball not visible ≥ 1.5 s
+                                  │ ball vanished while CLOSE → instant
+                                  │ ball not visible ≥ 1.5 s (far) → wait
                                   ▼
                              SHOOT MODE (aim at goal color, reverse-shoot)
                                   │ ball reappears
@@ -28,125 +44,139 @@ SEEK (no ball) ──ball found──► CHASE (drive to + grab ball)
                              AIM & SHOOT (fine-tune, fire when aligned)
 ```
 
-1. **CHASE** — Track the orange ball. Turn (port A / omni base) to face it,
-   drive forward until ball is within the dribbler, dribbler spinning
-   forward (clockwise) to trap/roll.
-2. **SHOOT MODE** — Ball not visible ≥ 1.5 s = it's in the dribbler.
-   Aim at the active goal color, drive until the bot–ball–goal line aligns,
-   then **reverse the dribbler (anticlockwise)** to shoot.
-3. **AIM & SHOOT** — Ball and goal both visible: aim through the ball's
-   centroid at the goal's centroid; fire when horizontal error < ALIGN_TOL.
+1. **CHASE** — Track the orange ball. Differential drive turns to face it
+   (port A vs D differential), forward speed scales down as the turn grows
+   so the bot doesn't overshoot. Dribbler spins forward the whole time.
+2. **Ball-lost fast path (your 15 cm optimization):**
+   - Ball was **large** (area ≥ `BALL_AREA_CLOSE`) when it vanished →
+     it's in the dribbler → **immediately** go to SHOOT MODE. No 1.5 s wait.
+   - Ball was **small** when it vanished → it just left the field of view →
+     wait `LOST_TIMEOUT_S` (1.5 s) before assuming it's in the dribbler.
+3. **AIM & SHOOT** — Ball and goal both visible: fire when horizontal
+   error < `ALIGN_TOL_PX` AND ball area < `BALL_MAX_AREA` (not sitting in
+   the dribbler zone).
 4. **Which goal to shoot at** — decided by the referee's orientation at
-   kickoff. Operator loads the mode **before the half starts**:
-   - `python robocup.py --half 1` → shoot **blue**, defend **yellow**
-   - `python robocup.py --half 2` → shoot **yellow**, defend **blue**
-   - One code path; `--half` just flips the goal color constant.
-   - If the ref assigns the opposite orientation, swap the flag.
+   kickoff. Operator picks the wrapper file **before the half starts**:
+   - `python half_blue.py`   → shoot **blue**, defend yellow
+   - `python half_yellow.py`  → shoot **yellow**, defend blue
+   - If the ref assigns the opposite orientation, swap the file.
+
+## Boundary guard (white sensor, port 1 — "bot does NOT go beyond the white line")
+A background thread polls the white color sensor at 20 Hz in a forever loop.
+The instant it reads `WHITECOLOR` (debounced over 3 consecutive reads), it
+**stops all motors** immediately — no waiting for the vision loop. The main
+loop then re-searches for the ball and drives back toward it.
+
+> **Mounting note:** the sensor must be physically placed so that when the
+> robot approaches the white boundary line, the sensor is looking *down* at
+> the line. Test on the field; the code is correct, the mount position is
+> yours to verify.
 
 ## Vision
-- **Ball (orange golf):** HSV `H 10–25, S 120–255, V 120–255`, min area ~400 px.
+- **Ball (orange golf):** HSV `H 10–25, S 120–255, V 120–255`, min area 400 px.
   Orange is a narrow hue band — much more lighting-robust than white.
-  Red sensor lights on other bots must be covered (2026 rule) so they don't
-  trigger the ball detector.
+  Red sensor lights on other bots must be covered (2026 rule).
 - **Goal:** detect the colored goal **interior** (not the posts).
   - Blue:  H 100–130, S 80–255, V 80–255
   - Yellow: H 25–35, S 80–255, V 180–255
-  - Largest colored contour = active goal; centroid = aim point;
-    area → rough distance estimate for shot power.
-- **Mirror cone:** expect a warped/double-image frame. Calibration step
-  must map goal-centroid → drive angle on the real field.
+  - Largest colored contour = active goal; centroid = aim point.
+- **Mirror cone:** expect a warped/double-image frame. The detector takes
+  the **largest** contour (the direct view). If the ghost wins on the field,
+  add an aspect-ratio or ROI filter — test with the real cone first.
+- **White border:** does NOT need camera detection. The white color sensor
+  (port 1) is the boundary guard. The camera only looks for orange + goal color.
 
-## Motion
-- 3-omni base: ports B/C/D → `vx, vy, omega`; port A = dribbler.
-- **Grab:** proportional `omega` on ball x-error, drive forward until ball
-  centroid nears screen center; dribbler spinning forward the whole time.
-- **Shoot:** `dribbler.start(speed=-SHOOT_SPEED)` for `SHOOT_MS`, stop.
-  Shot distance ∝ speed × duration — calibrate to 3 m and 8 m on the
-  158 × 219 cm field (two presets in `config.py`).
-- **Ball lost ≥ 1.5 s:** assume in dribbler; switch to goal-aiming + shoot.
+## Motion (differential drive, A + D)
+- Forward: A and D at the same speed. Turn: A and D opposite.
+  `move(forward, turn)`: A = forward + turn, D = forward − turn (clamped to ±100).
+- **Grab:** differential turn toward the ball, forward speed scales down
+  as the turn grows (no overshoot). Dribbler spinning forward.
+- **Shoot:** `dribbler.start(speed=-100)` for `SHOOT_MS` ms, then coast
+  (no hard brake, so the ball doesn't eject). `SHOOT_SPEED = 100` = full power.
+- **Ball-lost fast path:** see state machine above.
 
-## Calibration knobs (config.py — tune on the field)
-- `BALL_*`, `GOAL_BLUE_*`, `GOAL_YELLOW_*` HSV ranges + min areas
-- `LOST_TIMEOUT_S` (start 1.5 s)
+## The single file: `robocup.py`
+Everything is packed into one runnable file (your requirement):
+```
+robocup.py
+├── CONFIG section (all HSV, speeds, ports, sensor constants)
+├── Vision:  ball_centroid(), goal_centroid()
+├── Robot:   Robot class — differential move/stop, dribbler, shoot, white sensor
+├── BoundaryGuard: forever-loop thread — white → stop
+├── Bot:     state machine — CHASE / SHOOT_MODE / AIM_SHOOT / fast-path
+└── main():  --half flag, --no-ev3 flag
+```
+`calibrate.py` and `tests/` stay as separate helper files (optional, not
+needed on the robot).
+
+## Two-script idea (manual half selection)
+- `half_blue.py`   → injects `--half 1`, runs `robocup.main()`
+- `half_yellow.py`  → injects `--half 2`, runs `robocup.main()`
+
+You pick which file to run before the half starts. Only the goal color
+differs; all the logic lives in `robocup.py`. If the ref assigns the
+opposite orientation, just run the other file.
+
+## Calibration knobs (in robocup.py CONFIG section — tune on the field)
+- `BALL_HSV` — orange range. `GOAL_BLUE_HSV` / `GOAL_YELLOW_HSV` — goal ranges.
+- `LOST_TIMEOUT_S` (1.5 s) — fallback wait when ball vanished while far.
+- `BALL_AREA_CLOSE` (4000 px²) — the "ball was close when it disappeared"
+  threshold for the instant-dribbler fast path.
 - `CHASE_SPEED`, `OMEGA_KP`, `DIBBLE_SPEED`
-- `SHOOT_SPEED`, `SHOOT_MS` — two presets: short (3 m) and long (10 m)
-- `ALIGN_TOL_PX` — horizontal aim error threshold before firing
+- `SHOOT_SPEED` (100), `SHOOT_MS` (250) — shot power. Calibrate to 3 m and 8 m.
+- `ALIGN_TOL_PX` (40) — aim error threshold before firing.
+- `WHITE_SENSOR_PORT` (1) — port of the white color sensor.
 
 ## File layout
 ```
-main.py            # legacy pink tracker (kept, not used — has syntax error, superseded)
-robocup.py        # entry: connect, webcam, state machine, --half flag
-robot.py          # EV3 wrapper: omni drive, stop, dribbler fwd/reverse, shoot()
-vision.py         # HSV masks: ball_centroid, goal_centroid → (cx, cy, area) | None
-config.py         # all HSV ranges, speeds, timeouts, thresholds
-calibrate.py      # live overlay tool: prints ball + goal centroids for tuning
-tests/test_vision.py  # unit tests for vision.py (synthetic HSV frames)
+robocup.py           # ← THE file to run on the robot. Everything is here.
+half_blue.py         # First half: shoot blue.  5 lines, calls robocup.main().
+half_yellow.py       # Second half: shoot yellow. 5 lines, calls robocup.main().
+calibrate.py         # Live HSV overlay tool (optional, for tuning thresholds)
+main.py              # Legacy pink-tracker demo (kept for reference, not used)
+tests/test_vision.py # Unit tests for vision.py (synthetic HSV frames)
+tests/test_robocup_logic.py # Unit tests for robocup.py state-machine flags
 ```
 
-## Implementation status (as of 2026-07-15)
-All implementation tasks complete and committed on `robocup-vision-control` branch.
-Vision unit tests: 5/5 passing. Camera-only smoke test not yet run on real hardware.
+## Implementation status (as of 2026-10-22)
+All code complete on `robocup-vision-control` branch. 8/8 tests passing.
+Camera-only smoke test not yet run on real hardware.
 
-### Known issues (from code review — fix before competition)
-- **MEDIUM:** `robocup.py` `_chase` — `vx` stays at `CHASE_SPEED` even while turning;
-  bot overshoots when ball is far to one side. Scale `vx` down by `abs(err)`.
-- **MEDIUM:** `robocup.py` `run()` — no frame-rate cap; BLE commands fire at 100+ fps,
-  overloading the EV3. Add `time.sleep(0.033)` (≈30 fps) at loop end.
-- **MEDIUM:** `robot.py` `idle()` — `dribbler.stop(brake=True)` hard-brakes;
-  ball can eject from dribbler. Use `stop(brake=False)` for dribbler only.
-- **LOW:** `robot.py` `omni()` — `int(speed * scale)` truncates; use `round()` instead.
-- **LOW:** `robocup.py` — no camera open retry; add 3-retry loop with 3 s backoff.
-- **LOW:** `main.py` line 103 — `p#` syntax error; add "legacy" header or delete file.
-- **LOW:** `calibrate.py` — add on-frame text showing active goal color.
-- **DEFERRED (HIGH, on-field first):** mirror-cone double-detection of ball.
-  `vision.py` currently takes the largest contour (direct view). Add an
-  aspect-ratio or ROI filter only after testing with the real cone on the field.
-
-## Two-script idea (manual half selection)
-Instead of a `--half` flag, the team can run one of two dedicated scripts:
-- `half_blue.py` — ball-detect + chase + shoot at **blue** goal (defend yellow)
-- `half_yellow.py` — ball-detect + chase + shoot at **yellow** goal (defend blue)
-
-Both share the same logic; only the goal color differs. The `--half` CLI flag
-in `robocup.py` already does this in one file — the two-script version is a
-convenience wrapper:
-```python
-# half_blue.py
-from robocup import main
-import sys
-sys.argv = [sys.argv[0], "--half", "1"] + sys.argv[1:]
-main()
-```
-Decide before the competition: one file + flag, or two wrapper scripts.
-Either way, the goal color is fixed before the half starts (ref decides orientation).
-
-## EV3 coding in Python (LATER — not now)
-`ev3_dc` connects to the EV3 Brain over Bluetooth. The Brain runs
-microPython. Once the camera-based logic is solid on the laptop, the
-next step is moving the control loop onto the EV3 itself so the bot
-runs autonomously without the laptop tether:
-1. Port `vision.py` to microPython (cv2 is not available on the Brain —
-   ball detection will need to run on the laptop and stream results, or
-   the vision sensor will be a camera module that can do basic on-board
-   tracking).
-2. Port `robot.py` to use `ev3dc` directly or the built-in motor ports.
-3. `config.py` thresholds stay the same; only the transport layer changes.
+### Remaining known issues
+- **DEFERRED (HIGH, on-field first):** mirror-cone double-detection of the
+  ball. The detector takes the largest contour; add an aspect-ratio filter
+  only after testing with the real cone on the field.
+- **ON-FIELD TEST:** the white sensor's physical mounting position — the
+  code is correct; you must verify the sensor actually sees the line when
+  the robot is close to the boundary.
+- **ON-FIELD TUNE:** `SHOOT_SPEED`/`SHOOT_MS` — measure actual shot distance
+  for 3 m and 8 m. `BALL_AREA_CLOSE` — set it so "close" means ~15 cm.
+- **LOW:** `main.py` line 103 has a `p#` syntax error (legacy, not used).
+- **LOW:** `calibrate.py` — add on-frame text showing the active goal color.
 
 ## Open questions / next steps
 1. Confirm the mirror cone's actual FOV/warp on this field → calibrate
    goal-centroid → drive-angle mapping.
-2. Measure shot distance vs `SHOOT_SPEED`/`SHOOT_MS` for 2 m, 5 m, 10 m.
-3. Check whether both goals are visible in the same frame; if so, make sure
-   the detector only acts on the goal color the `--half` flag selected.
-4. Confirm that red sensor lights on other teams' bots are covered —
+2. Measure shot distance vs `SHOOT_MS` at `SHOOT_SPEED=100` for 3 m and 8 m.
+3. Confirm that red sensor lights on other teams' bots are covered —
    they look orange and will false-trigger the ball detector.
-5. Fix the HIGH and MEDIUM items above before the competition.
+4. Test the white sensor's mounting position on the real field.
+5. Set `BALL_AREA_CLOSE` so it corresponds to ~15 cm in your camera's view.
+
+## EV3 coding in Python (LATER — not now)
+`ev3_dc` connects to the EV3 Brain over Bluetooth from the laptop.
+`ev3dev2` runs code *on the brick itself* (its own microPython env).
+Once the camera-based logic is solid on the laptop, the next step is
+moving the control loop onto the EV3 so the bot runs without the tether:
+1. Port the vision to run on the brick (cv2 not available on the brick —
+   use an on-board camera module or stream pixel data over BLE).
+2. Port the motor commands to `ev3dev2`'s motor API on the brick.
+3. The HSV thresholds stay the same; only the transport layer changes.
 
 ## Testing plan
-- Each vision function: unit test with synthetic HSV images.
-- `robocup.py --no-ev3` runs the camera-only loop and prints motor commands —
-  iterate thresholds without the robot wired up.
-- Field calibration via `calibrate.py` before every practice session.
+- Each vision function: unit test with synthetic HSV images (in `tests/`).
+- `python robocup.py --half 1 --no-ev3` — camera-only, prints motor commands.
+- `python calibrate.py` — live overlay, tune HSV before every practice session.
 
 ## Calibration Log (fill in on each field session)
 | Item | Value |
@@ -155,8 +185,10 @@ runs autonomously without the laptop tether:
 | Blue goal HSV (observed) | H:__–__ S:__–__ V:__–__ |
 | Yellow goal HSV (observed) | H:__–__ S:__–__ V:__–__ |
 | ALIGN_TOL_PX tuned | __ |
-| SHOOT_SPEED / SHOOT_MS for ~3 m | __ / __ ms |
-| SHOOT_SPEED / SHOOT_MS for ~8 m | __ / __ ms |
+| BALL_AREA_CLOSE (≈15 cm in px²) | __ |
+| SHOOT_MS for ~3 m | __ |
+| SHOOT_MS for ~8 m | __ |
 | LOST_TIMEOUT_S tuned | __ s |
+| White sensor mount position OK? | Y / N |
 | Both goals visible simultaneously? | Y / N |
 | Mirror cone warp: goal centroid offset | __ px |
