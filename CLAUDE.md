@@ -127,6 +127,33 @@ opposite orientation, just run the other file.
 - `ALIGN_TOL_PX` (40) — aim error threshold before firing.
 - `WHITE_SENSOR_PORT` (1) — port of the white color sensor.
 
+## Deployment (GitHub)
+The repo is at **https://github.com/pranjalguptahdfc-art/Robocup2026**
+(the default branch is `robocup-vision-control`).
+
+**Files the school PC needs to run the bot:**
+```
+robocup.py        # the whole program — everything is inlined, no other .py needed
+half_blue.py      # first half: shoot blue
+half_yellow.py    # second half: shoot yellow
+```
+`calibrate.py` (tuning) and `tests/` are optional.
+
+**At the school PC:**
+```
+git clone https://github.com/pranjalguptahdfc-art/Robocup2026.git
+cd Robocup2026
+pip install ev3_dc opencv-python numpy
+
+python robocup.py --half 1 --no-ev3   # webcam-only smoke test, no robot
+python half_blue.py                   # run the first half
+python half_yellow.py                 # run the second half
+```
+
+**EV3 must be:**
+- On and paired to the school PC over Bluetooth (MAC in `EV3_ADDRESS`).
+- Motors A + D on the large-motor ports, dribbler on C, white sensor on port 1.
+
 ## File layout
 ```
 robocup.py           # ← THE file to run on the robot. Everything is here.
@@ -140,7 +167,7 @@ tests/test_robocup_logic.py # Unit tests for robocup.py state-machine flags
 
 ## Implementation status (as of 2026-10-22)
 All code complete on `robocup-vision-control` branch. 8/8 tests passing.
-Camera-only smoke test not yet run on real hardware.
+Pushed to GitHub. Camera-only smoke test not yet run on real hardware.
 
 ### Remaining known issues
 - **DEFERRED (HIGH, on-field first):** mirror-cone double-detection of the
