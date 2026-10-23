@@ -3,18 +3,18 @@
 #  Run on the laptop, drives the EV3 over Bluetooth.
 #
 #  Hardware map (confirmed with team):
-#    Motor A + D  : differential drive (left / right wheel)
+#    Motor A + B  : differential drive (left / right wheel)
 #    Motor C      : dribbler  (forward = trap,  reverse = shoot)
-#    Port 1       : white colour sensor -> boundary-line guard
+#    Port 3 + 4   : two white colour sensors (left + right) -> boundary-line guard
 #
 #  Usage:
 #    python robocup.py --half 1     # shoot BLUE goal,  defend YELLOW
 #    python robocup.py --half 2     # shoot YELLOW goal, defend BLUE
 #    python robocup.py --no-ev3     # camera-only, print commands
 #
-#  The white sensor runs in a background thread: the instant it sees the
-#  white boundary line, all motors stop and the bot re-searches for the
-#  ball.  This is what keeps the bot inside the field.
+#  Either white sensor runs in a background thread: the instant one sees
+#  the white boundary line, all motors stop and the bot re-searches for
+#  the ball.  This is what keeps the bot inside the field.
 
 import argparse
 import math
@@ -46,10 +46,10 @@ GOAL_BLUE_HSV   = dict(lower=(100, 80, 80),  upper=(130, 255, 255), min_area=300
 GOAL_YELLOW_HSV = dict(lower=(25, 80, 180),  upper=(35, 255, 255),  min_area=300)
 GOAL_BY_NAME = {"blue": GOAL_BLUE_HSV, "yellow": GOAL_YELLOW_HSV}
 
-# --- The white boundary line (field edges).  The WHITE SENSOR watches this;
-#     the camera never has to detect it, which is why a white border never
-#     confuses the orange-ball detector.
-WHITE_SENSOR_PORT = 1
+# --- The white boundary line (field edges).  The WHITE SENSORS (ports 3 + 4)
+#     watch this; the camera never has to detect it, which is why a white
+#     border never confuses the orange-ball detector.
+WHITE_SENSOR_PORTS = [3, 4]
 
 # --- Ball-lost logic.  If the ball VANISHES while it was CLOSE (large
 #     area), it has dropped into the dribbler -> shoot immediately.
@@ -58,7 +58,7 @@ WHITE_SENSOR_PORT = 1
 BALL_AREA_CLOSE = 4000     # px^2.  Above this = "close" when it disappears.
 LOST_TIMEOUT_S    = 1.5    # fallback wait when ball vanished while far.
 
-# --- Motion (differential drive on A + D)
+# --- Motion (differential drive on A + B)
 CHASE_SPEED   = 50         # forward speed while chasing the ball
 OMEGA_KP      = 0.2        # turn gain:  omega = int(err_px * OMEGA_KP)
 ALIGN_TOL_PX  = 40         # |ball_x - goal_x| under this -> aligned, fire
@@ -108,37 +108,41 @@ def goal_centroid(hsv, spec=None):
 
 
 # ============================================================
-# ROBOT — differential drive (A + D), dribbler (C), white sensor (1)
+# ROBOT — differential drive (A + B), dribbler (C), white sensors (3 + 4)
 # ============================================================
 class Robot:
     def __init__(self, no_ev3=False):
         self.no_ev3 = no_ev3
         if no_ev3:
-            self.wA = self.wD = self.dribbler = self.white = None
+            self.wA = self.wB = self.dribbler = None
+            self.white_sensors = []
             return
         r = ev3.EV3(protocol=ev3.BLUETOOTH, host=EV3_ADDRESS)
         self.wA = ev3.Motor(ev3.PORT_A, ev3_obj=r)
-        self.wD = ev3.Motor(ev3.PORT_D, ev3_obj=r)
+        self.wB = ev3.Motor(ev3.PORT_B, ev3_obj=r)
         self.dribbler = ev3.Motor(ev3.PORT_C, ev3_obj=r)
-        # White colour sensor on port 1.
-        self.white = ev3.Color(ev3.PORT_1, ev3_obj=r)
+        # Two white colour sensors: ports 3 (left) and 4 (right).
+        self.white_sensors = [
+            ev3.Color(ev3.PORT_3, ev3_obj=r),
+            ev3.Color(ev3.PORT_4, ev3_obj=r),
+        ]
 
-    # ---- differential drive: A = left, D = right -----------------
+    # ---- differential drive: A = left, B = right -----------------
     def move(self, forward=0, turn=0):
-        """forward & turn in -100..100.  A = forward+turn, D = forward-turn."""
+        """forward & turn in -100..100.  A = forward+turn, B = forward-turn."""
         A = int(max(-100, min(100, forward + turn)))
-        D = int(max(-100, min(100, forward - turn)))
+        B = int(max(-100, min(100, forward - turn)))
         if self.no_ev3:
-            print(f"move forward={forward:>3} turn={turn:>3}  -> A={A:>3} D={D:>3}")
+            print(f"move forward={forward:>3} turn={turn:>3}  -> A={A:>3} B={B:>3}")
             return
         self.wA.start(speed=A)
-        self.wD.start(speed=D)
+        self.wB.start(speed=B)
 
     def stop(self):
         if self.no_ev3:
             return
         self.wA.stop(brake=True)
-        self.wD.stop(brake=True)
+        self.wB.stop(brake=True)
 
     def dribbler_forward(self):
         if self.no_ev3:
@@ -165,21 +169,24 @@ class Robot:
         if not self.no_ev3:
             self.dribbler.stop(brake=False)
 
-    # ---- white boundary sensor -----------------------------------
+    # ---- white boundary sensors (ports 3 + 4) -------------------
     def sees_white(self):
-        """True when port-1 colour sensor reads the white boundary line."""
+        """True when EITHER colour sensor reads the white boundary line."""
         if self.no_ev3:
             return False
-        try:
-            return self.white.color == ev3.WHITECOLOR
-        except Exception:
-            return False
+        for sensor in self.white_sensors:
+            try:
+                if sensor.color == ev3.WHITECOLOR:
+                    return True
+            except Exception:
+                pass
+        return False
 
 
 # ============================================================
 # BOUNDARY GUARD — forever-loop in a background thread.
-#  The instant white is seen, stop everything.  The main loop then
-#  re-searches for the ball and drives back toward it.
+#  Either white sensor (port 3 or 4) sees the line -> stop everything.
+#  The main loop then re-searches for the ball and drives back.
 # ============================================================
 @dataclass
 class BoundaryGuard:

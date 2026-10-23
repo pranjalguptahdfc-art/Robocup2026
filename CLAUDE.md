@@ -17,9 +17,11 @@
 ## Hardware map (confirmed with team, 2026-10-22)
 | Port | Component | Notes |
 |------|-----------|-------|
-| **A + D** | Movement wheels | Differential drive (left / right). Speeds −100…100. |
+| **A + B** | Movement wheels | Differential drive (left / right). Speeds −100…100. |
 | **C** | Dribbler motor | Forward = trap/roll; reverse = shoot. |
-| **1** | White color sensor | Boundary-line guard. Sees white → stop + re-search. |
+| **3 + 4** | Two white color sensors | Left + right boundary-line guards. Either one seeing white → full stop. |
+| **1** | Pixie cam | Not used in this code path. |
+| **2** | Gyro | Not used in this code path. |
 
 - Laptop connects to the EV3 over **Bluetooth** via `ev3_dc`
   (EV3 address in `config.py`: `00:16:53:61:AB:61`).
@@ -27,7 +29,8 @@
   for the laptop→Bluetooth path.
 - The **white boundary lines** around the field do NOT confuse the camera,
   because the camera detects the **orange** ball — white is a different hue
-  band. The white sensor (port 1) is the boundary guard, not the camera.
+  band. The white sensors (ports 3 + 4) are the boundary guard, not the
+  camera.
 
 ## How it works (state machine)
 Camera has full-field view (mirror cone). The bot cycles through four states
@@ -45,7 +48,7 @@ SEEK (no ball) ──ball found──► CHASE (drive to + grab ball)
 ```
 
 1. **CHASE** — Track the orange ball. Differential drive turns to face it
-   (port A vs D differential), forward speed scales down as the turn grows
+   (port A vs B differential), forward speed scales down as the turn grows
    so the bot doesn't overshoot. Dribbler spins forward the whole time.
 2. **Ball-lost fast path (your 15 cm optimization):**
    - Ball was **large** (area ≥ `BALL_AREA_CLOSE`) when it vanished →
@@ -61,16 +64,17 @@ SEEK (no ball) ──ball found──► CHASE (drive to + grab ball)
    - `python half_yellow.py`  → shoot **yellow**, defend blue
    - If the ref assigns the opposite orientation, swap the file.
 
-## Boundary guard (white sensor, port 1 — "bot does NOT go beyond the white line")
-A background thread polls the white color sensor at 20 Hz in a forever loop.
-The instant it reads `WHITECOLOR` (debounced over 3 consecutive reads), it
-**stops all motors** immediately — no waiting for the vision loop. The main
-loop then re-searches for the ball and drives back toward it.
+## Boundary guard (white sensors, ports 3 + 4 — "bot does NOT go beyond the white line")
+A background thread polls the two white color sensors at 20 Hz in a forever
+loop. The instant *either* sensor reads `WHITECOLOR` (debounced over 3
+consecutive reads), it **stops all motors** immediately — no waiting for
+the vision loop. The main loop then re-searches for the ball and drives
+back toward it.
 
-> **Mounting note:** the sensor must be physically placed so that when the
-> robot approaches the white boundary line, the sensor is looking *down* at
-> the line. Test on the field; the code is correct, the mount position is
-> yours to verify.
+> **Mounting note:** the two sensors must be physically placed on the left
+> and right sides of the bot so that each is looking *down* at the boundary
+> line as the robot approaches it. Test on the field; the code is correct,
+> the mount position is yours to verify.
 
 ## Vision
 - **Ball (orange golf):** HSV `H 10–25, S 120–255, V 120–255`, min area 400 px.
@@ -83,12 +87,13 @@ loop then re-searches for the ball and drives back toward it.
 - **Mirror cone:** expect a warped/double-image frame. The detector takes
   the **largest** contour (the direct view). If the ghost wins on the field,
   add an aspect-ratio or ROI filter — test with the real cone first.
-- **White border:** does NOT need camera detection. The white color sensor
-  (port 1) is the boundary guard. The camera only looks for orange + goal color.
+- **White border:** does NOT need camera detection. The white color sensors
+  (ports 3 + 4) are the boundary guard. The camera only looks for orange +
+  goal color.
 
-## Motion (differential drive, A + D)
-- Forward: A and D at the same speed. Turn: A and D opposite.
-  `move(forward, turn)`: A = forward + turn, D = forward − turn (clamped to ±100).
+## Motion (differential drive, A + B)
+- Forward: A and B at the same speed. Turn: A and B opposite.
+  `move(forward, turn)`: A = forward + turn, B = forward − turn (clamped to ±100).
 - **Grab:** differential turn toward the ball, forward speed scales down
   as the turn grows (no overshoot). Dribbler spinning forward.
 - **Shoot:** `dribbler.start(speed=-100)` for `SHOOT_MS` ms, then coast
@@ -101,7 +106,7 @@ Everything is packed into one runnable file (your requirement):
 robocup.py
 ├── CONFIG section (all HSV, speeds, ports, sensor constants)
 ├── Vision:  ball_centroid(), goal_centroid()
-├── Robot:   Robot class — differential move/stop, dribbler, shoot, white sensor
+├── Robot:   Robot class — differential move/stop, dribbler, shoot, white sensors
 ├── BoundaryGuard: forever-loop thread — white → stop
 ├── Bot:     state machine — CHASE / SHOOT_MODE / AIM_SHOOT / fast-path
 └── main():  --half flag, --no-ev3 flag
@@ -125,7 +130,7 @@ opposite orientation, just run the other file.
 - `CHASE_SPEED`, `OMEGA_KP`, `DIBBLE_SPEED`
 - `SHOOT_SPEED` (100), `SHOOT_MS` (250) — shot power. Calibrate to 3 m and 8 m.
 - `ALIGN_TOL_PX` (40) — aim error threshold before firing.
-- `WHITE_SENSOR_PORT` (1) — port of the white color sensor.
+- `WHITE_SENSOR_PORTS` (`[3, 4]`) — ports of the two white color sensors.
 
 ## Deployment (GitHub)
 The repo is at **https://github.com/pranjalguptahdfc-art/Robocup2026**
@@ -152,7 +157,7 @@ python half_yellow.py                 # run the second half
 
 **EV3 must be:**
 - On and paired to the school PC over Bluetooth (MAC in `EV3_ADDRESS`).
-- Motors A + D on the large-motor ports, dribbler on C, white sensor on port 1.
+- Motors A + B on the large-motor ports, dribbler on C, white sensors on ports 3 + 4.
 
 ## File layout
 ```
@@ -169,7 +174,7 @@ tests/test_robocup_logic.py # Unit tests for robocup.py state-machine flags
 ## Running procedure (laptop + EV3)
 **Before running — check the EV3 hardware:**
 - EV3 brick is **powered on** and **paired over Bluetooth** with the laptop.
-- Motors: **A + D** = large drive motors, **C** = dribbler, **Port 1** = white sensor.
+- Motors: **A + B** = large drive motors, **C** = dribbler, **Ports 3 + 4** = white sensors.
 
 **Sequence:**
 1. Camera-only test (no robot needed): `python robocup.py --half 1 --no-ev3`
@@ -188,20 +193,41 @@ Pushed to GitHub. Camera-only smoke test not yet run on real hardware.
 - **DEFERRED (HIGH, on-field first):** mirror-cone double-detection of the
   ball. The detector takes the largest contour; add an aspect-ratio filter
   only after testing with the real cone on the field.
-- **ON-FIELD TEST:** the white sensor's physical mounting position — the
-  code is correct; you must verify the sensor actually sees the line when
-  the robot is close to the boundary.
+- **ON-FIELD TEST:** the two white sensors' physical mounting positions —
+  the code is correct; you must verify each sensor actually sees the line
+  when the robot is close to the boundary.
 - **ON-FIELD TUNE:** `SHOOT_SPEED`/`SHOOT_MS` — measure actual shot distance
   for 3 m and 8 m. `BALL_AREA_CLOSE` — set it so "close" means ~15 cm.
+- **PLANNED:** goalkeeper bot (second EV3) — see "Two-robot setup" below.
 - **LOW:** `main.py` line 103 has a `p#` syntax error (legacy, not used).
 - **LOW:** `calibrate.py` — add on-frame text showing the active goal color.
+
+## Two-robot setup (planned)
+The match uses **two EV3 robots**:
+
+| Role | Behaviour |
+|------|-----------|
+| **Field bot** (the one in `robocup.py`) | Chase ball, dribble, shoot at target goal. |
+| **Goalkeeper** (second EV3) | Stays on the white line at the front of the penalty area,
+  tracking the ball's vertical position along that line to block shots.
+  Code not yet written. |
+
+**Goalkeeper logic (design):**
+- The keeper's camera tracks the ball's `cy` (vertical pixel).
+- The keeper only drives **sideways along the white line** — never forward into the penalty area.
+- White sensors (ports 3 + 4) serve as the "stay on the line" constraint:
+  the keeper is clamped between the two sensors, so it can't drift off the line.
+- When the ball is near the keeper's goal, the keeper positions itself
+  directly between the ball and the goal interior.
+- Keeper does NOT shoot or dribble — it is a blocker.
 
 ## Known limitations
 - **Mirror cone:** if the ball appears twice in the frame (direct +
   reflected), the detector takes the largest blob. If the ghost image is
   larger, add an aspect-ratio filter.
-- **White sensor mount:** must be angled to look *down* at the boundary
-  line as the bot approaches it. Test on the field.
+- **White sensor mounts:** both sensors (ports 3 + 4) must be angled to
+  look *down* at the boundary line as the bot approaches it. Test on the
+  field.
 - **`ev3_dc` vs `ev3dev2`:** `ev3_dc` connects over Bluetooth from the
   laptop. `ev3dev2` runs code *on the brick* — not used in this project.
 `ev3_dc` connects to the EV3 Brain over Bluetooth from the laptop.

@@ -47,8 +47,8 @@ python robocup.py --half 1 --no-ev3
 ### 2. Run with the real EV3
 Before starting, make sure:
 - The EV3 brick is **powered on** and **paired over Bluetooth** with this laptop.
-- The white boundary sensor is on **Port 1** of the EV3.
-- The two large drive motors are on **ports A and D**.
+- The two white boundary sensors are on **ports 3 and 4** of the EV3.
+- The two large drive motors are on **ports A and B**.
 - The dribbler medium motor is on **port C**.
 
 Then run:
@@ -83,9 +83,9 @@ SEEK ──ball found──► CHASE (drive toward ball, dribbler spinning forwa
         └── ball reappears → back to CHASE or AIM & SHOOT
 ```
 
-**White boundary guard (background thread):** A color sensor on port 1
-polls at 20 Hz. The instant it reads white (debounced over 3 frames),
-all motors stop — the bot never crosses the white boundary line.
+**White boundary guard (background thread):** Two color sensors on ports 3
+and 4 poll at 20 Hz. The instant *either* reads white (debounced over 3
+frames), all motors stop — the bot never crosses the white boundary line.
 
 **Ball-lost fast path:** If the ball's image was large when it
 disappeared, it is assumed to be in the dribbler and the bot goes
@@ -110,7 +110,7 @@ All tunable constants are at the top of `robocup.py` in the
 | `SHOOT_SPEED` | `100` | Dribbler reverse speed. 100 = full power. |
 | `SHOOT_MS` | `250` | How long the reverse burst lasts, in ms. Calibrate to reach 3 m and 8 m. |
 | `ALIGN_TOL_PX` | `40` px | How close the ball and goal must be horizontally before firing. |
-| `WHITE_SENSOR_PORT` | `1` | Port of the white boundary sensor. |
+| `WHITE_SENSOR_PORTS` | `[3, 4]` | Ports of the two white boundary sensors (left + right). |
 
 ---
 
@@ -131,7 +131,7 @@ If the circles are not on the right objects, adjust `BALL_HSV`,
 Also measure and record:
 - `SHOOT_MS` needed to reach 3 m and 8 m from the goal
 - `BALL_AREA_CLOSE` value that corresponds to ~15 cm on your camera
-- `WHITE_SENSOR_PORT` / sensor mount position (the sensor must be angled
+- `WHITE_SENSOR_PORTS` / sensor mount positions (each sensor must be angled
   down so it sees the white line as the bot approaches it)
 
 ---
@@ -140,9 +140,10 @@ Also measure and record:
 
 | Port | Component | Notes |
 |------|-----------|-------|
-| **A + D** | Large drive motors | Differential drive. Left/right wheel. Speeds −100…100. |
+| **A + B** | Large drive motors | Differential drive. Left/right wheel. Speeds −100…100. |
 | **C** | Medium dribbler motor | Forward = trap/roll ball. Reverse = shoot. |
-| **1** | White color sensor | Boundary-line guard. Sees white → stop. |
+| **3** | White color sensor (left) | Left boundary-line guard. |
+| **4** | White color sensor (right) | Right boundary-line guard. |
 | **Webcam** | Laptop camera | Must have a clear view of the field. Mirror cone optional. |
 
 ---
@@ -166,7 +167,26 @@ python robocup.py --half 1 --no-ev3
 - **Mirror cone:** If the ball appears twice in the frame (direct + reflected
   image), the detector takes the largest blob (usually the direct view). If
   the ghost image is larger, an aspect-ratio filter will need to be added.
-- **White sensor mount:** The sensor must be physically positioned to look
-  *down* at the boundary line as the bot approaches it. Test this on the field.
+- **White sensor mounts:** Both sensors (ports 3 + 4) must be physically
+  positioned to look *down* at the boundary line as the bot approaches it.
+  Test this on the field.
 - **`ev3_dc`** connects over Bluetooth from the laptop. `ev3dev2` is a
   separate library for running code *on the EV3 brick itself* — not used here.
+
+---
+
+## Two-Robot Setup (Planned)
+
+The team will run **two EV3 robots** during a match:
+
+| Role | Behaviour |
+|------|-----------|
+| **Field bot** | The current `robocup.py` — chases the ball, dribbles, and shoots at the target goal. |
+| **Goalkeeper** | A second EV3 that stays on the white line at the front of the penalty area, tracking the ball's position along that line to block shots. Not yet coded. |
+
+**Goalkeeper design (for when we build it):**
+- Keeper's camera tracks the ball's vertical position (`cy`) in the frame.
+- Keeper only drives **sideways along the white line** — never forward into the penalty area.
+- The two white sensors (ports 3 + 4) act as the "stay on the line" constraint.
+- When the ball is near the keeper's goal, the keeper positions itself directly between the ball and the goal interior.
+- The keeper does NOT dribble or shoot — it is a pure blocker.
